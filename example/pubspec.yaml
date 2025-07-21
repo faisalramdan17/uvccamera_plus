@@ -1,0 +1,24 @@
+name: uvccamera_example
+description: "Demonstrates how to use the uvccamera plugin."
+publish_to: none
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  uvccamera: 0.0.13
+  cross_file: ^0.3.4+2
+  cupertino_icons: ^1.0.8
+  permission_handler: ^11.3.1
+
+dev_dependencies:
+  integration_test:
+    sdk: flutter
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
