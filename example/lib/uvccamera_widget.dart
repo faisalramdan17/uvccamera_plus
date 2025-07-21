@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer';
 
 import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
@@ -26,6 +27,7 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
   StreamSubscription<UvcCameraStatusEvent>? _statusEventSubscription;
   StreamSubscription<UvcCameraButtonEvent>? _buttonEventSubscription;
   StreamSubscription<UvcCameraDeviceEvent>? _deviceEventSubscription;
+  StreamSubscription<UvcCameraFrameEvent>? _frameEventSubscription;
   String _log = '';
 
   @override
@@ -125,6 +127,14 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                 _log = 'btn(${event.button}): ${event.state}\n$_log';
               });
             });
+            log('_cameraController!.cameraFrameEvents');
+
+            // _frameEventSubscription = _cameraController!.cameraFrameEvents.listen((event) {
+            //   log('frame: ${event.imageData.length}');
+            //   setState(() {
+            //     _log = 'frame: ${event.imageData.length}\n$_log';
+            //   });
+            // });
           });
         } else if (event.type == UvcCameraDeviceEventType.disconnected) {
           _hasCameraPermission = false;
@@ -134,6 +144,9 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
 
           _buttonEventSubscription?.cancel();
           _buttonEventSubscription = null;
+
+          _frameEventSubscription?.cancel();
+          _frameEventSubscription = null;
 
           _statusEventSubscription?.cancel();
           _statusEventSubscription = null;
@@ -168,6 +181,9 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
 
     _statusEventSubscription?.cancel();
     _statusEventSubscription = null;
+
+    _frameEventSubscription?.cancel();
+    _frameEventSubscription = null;
 
     _cameraController?.dispose();
     _cameraController = null;
@@ -316,6 +332,26 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                               value.isRecordingVideo ? Icons.stop : Icons.videocam,
                               color: value.isRecordingVideo ? Colors.white : Colors.black,
                             ),
+                          ),
+                          FloatingActionButton(
+                            backgroundColor: Colors.white,
+                            onPressed: () async {
+                              // Start streaming
+                              await _cameraController!.startImageStream((UvcCameraFrameEvent frameEvent) {
+                                log('Frame received: ${frameEvent.imageData.length} bytes');
+                                log('Resolution: ${frameEvent.width}x${frameEvent.height}');
+                                // Process raw image data here
+                              });
+                            },
+                            child: Icon(Icons.play_arrow, color: Colors.black),
+                          ),
+                          FloatingActionButton(
+                            backgroundColor: Colors.white,
+                            onPressed: () async {
+                              // Stop streaming
+                              await _cameraController!.stopImageStream();
+                            },
+                            child: Icon(Icons.stop, color: Colors.black),
                           ),
                         ],
                       );
