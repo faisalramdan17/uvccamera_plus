@@ -515,7 +515,12 @@ import io.flutter.view.TextureRegistry;
         );
         final var frameEventStreamHandler = new UvcCameraFrameEventStreamHandler();
         frameEventChannel.setStreamHandler(frameEventStreamHandler);
-        final var frameCallback = new UvcCameraFrameCallback(frameEventStreamHandler);
+        final var frameCallback = new UvcCameraFrameCallback(
+                frameEventStreamHandler,
+                desiredFrameSize.width,
+                desiredFrameSize.height,
+                getPixelFormatString(frameFormat)
+        );
 
         final var mediaRecorder = new MediaRecorder();
 
@@ -1227,6 +1232,23 @@ import io.flutter.view.TextureRegistry;
         }
 
         return null;
+    }
+
+    /**
+     * Converts a frame format integer to a string representation
+     *
+     * @param frameFormat the frame format integer (UVCCamera.FRAME_FORMAT_*)
+     * @return string representation of the frame format
+     */
+    private static String getPixelFormatString(int frameFormat) {
+        switch (frameFormat) {
+            case com.serenegiant.usb.UVCCamera.FRAME_FORMAT_YUYV:
+                return "yuyv";
+            case com.serenegiant.usb.UVCCamera.FRAME_FORMAT_MJPEG:
+                return "mjpeg";
+            default:
+                return "unknown";
+        }
     }
 
 }

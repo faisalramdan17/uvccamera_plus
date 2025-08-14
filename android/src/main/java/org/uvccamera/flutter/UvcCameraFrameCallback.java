@@ -26,12 +26,33 @@ import java.util.Map;
     private final UvcCameraFrameEventStreamHandler frameEventStreamHandler;
 
     /**
+     * Frame width
+     */
+    private final int width;
+
+    /**
+     * Frame height
+     */
+    private final int height;
+
+    /**
+     * Pixel format string
+     */
+    private final String pixelFormat;
+
+    /**
      * Constructor
      *
      * @param frameEventStreamHandler Frame event stream handler
+     * @param width Frame width
+     * @param height Frame height
+     * @param pixelFormat Pixel format string
      */
-    public UvcCameraFrameCallback(UvcCameraFrameEventStreamHandler frameEventStreamHandler) {
+    public UvcCameraFrameCallback(UvcCameraFrameEventStreamHandler frameEventStreamHandler, int width, int height, String pixelFormat) {
         this.frameEventStreamHandler = frameEventStreamHandler;
+        this.width = width;
+        this.height = height;
+        this.pixelFormat = pixelFormat;
     }
 
     @Override
@@ -67,10 +88,10 @@ import java.util.Map;
             // Create frame event data
             final Map<String, Object> frameEvent = new HashMap<>();
             frameEvent.put("imageData", frameData);
-            frameEvent.put("width", 640); // Default width - should be configurable
-            frameEvent.put("height", 480); // Default height - should be configurable
+            frameEvent.put("width", width); // Use dynamic width
+            frameEvent.put("height", height); // Use dynamic height
             frameEvent.put("timestamp", System.currentTimeMillis());
-            frameEvent.put("format", "yuv420"); // Default format - should be determined from actual format
+            frameEvent.put("format", pixelFormat); // Use dynamically determined format
 
             // Send frame event to Flutter (should be on main thread now)
             if (eventSink != null) {

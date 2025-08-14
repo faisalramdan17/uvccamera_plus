@@ -6,18 +6,18 @@
     "configurations": [
     
         {
-            "name": "uvccamera-0.0.13",
+            "name": "uvccamera_plus",
             "request": "launch",
             "type": "dart"
         },
         {
-            "name": "uvccamera-0.0.13 (profile mode)",
+            "name": "uvccamera_plus (profile mode)",
             "request": "launch",
             "type": "dart",
             "flutterMode": "profile"
         },
         {
-            "name": "uvccamera-0.0.13 (release mode)",
+            "name": "uvccamera_plus (release mode)",
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"
