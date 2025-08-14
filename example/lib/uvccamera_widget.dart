@@ -1,10 +1,15 @@
 import 'dart:async';
 import 'dart:developer';
+import 'dart:typed_data';
 
 import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uvccamera/uvccamera.dart';
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+import 'package:image/image.dart' as img;
+
+import 'pose_painter.dart';
 
 class UvcCameraWidget extends StatefulWidget {
   final UvcCameraDevice device;
@@ -30,11 +35,21 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
   StreamSubscription<UvcCameraFrameEvent>? _frameEventSubscription;
   String _log = '';
 
+  // ML Kit pose detection
+  late PoseDetector _poseDetector;
+  bool _isDetecting = false;
+  List<Pose> _detectedPoses = [];
+  Size _imageSize = Size.zero;
+
   @override
   void initState() {
     super.initState();
 
     WidgetsBinding.instance.addObserver(this);
+
+    // Initialize ML Kit pose detector
+    final options = PoseDetectorOptions(mode: PoseDetectionMode.stream, model: PoseDetectionModel.base);
+    _poseDetector = PoseDetector(options: options);
 
     _attach();
   }
@@ -44,6 +59,9 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
     WidgetsBinding.instance.removeObserver(this);
 
     _detach(force: true);
+
+    // Cleanup ML Kit pose detector
+    _poseDetector.close();
 
     super.dispose();
   }
@@ -288,14 +306,30 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                 alignment: Alignment.topCenter,
                 child: UvcCameraPreview(
                   _cameraController!,
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: SingleChildScrollView(
-                      child: SelectableText(
-                        _log,
-                        style: TextStyle(color: Colors.red, fontFamily: 'Courier', fontSize: 10.0),
+                  child: Stack(
+                    children: [
+                      // Log text overlay
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: SingleChildScrollView(
+                          child: SelectableText(
+                            _log,
+                            style: TextStyle(color: Colors.red, fontFamily: 'Courier', fontSize: 10.0),
+                          ),
+                        ),
                       ),
-                    ),
+                      // Pose detection overlay
+                      if (_detectedPoses.isNotEmpty)
+                        Positioned.fill(
+                          child: CustomPaint(
+                            painter: PosePainter(
+                              poses: _detectedPoses,
+                              imageSize: _imageSize,
+                              rotation: InputImageRotation.rotation0deg,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ),
@@ -336,11 +370,13 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                           FloatingActionButton(
                             backgroundColor: Colors.white,
                             onPressed: () async {
-                              // Start streaming
+                              // Start streaming with pose detection
                               await _cameraController!.startImageStream((UvcCameraFrameEvent frameEvent) {
                                 log('Frame received: ${frameEvent.imageData.length} bytes');
                                 log('Resolution: ${frameEvent.width}x${frameEvent.height}');
-                                // Process raw image data here
+
+                                // Process raw image data with ML Kit pose detection
+                                _processFrameForPoseDetection(frameEvent);
                               });
                             },
                             child: Icon(Icons.play_arrow, color: Colors.black),
@@ -366,5 +402,174 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
         }
       },
     );
+  }
+
+  // Process frames for ML Kit pose detection
+  Future<void> _processFrameForPoseDetection(UvcCameraFrameEvent frameEvent) async {
+    if (_isDetecting) return;
+
+    _isDetecting = true;
+    final startTime = DateTime.now().millisecondsSinceEpoch;
+
+    try {
+      final imageData = frameEvent.imageData;
+      final width = frameEvent.width;
+      final height = frameEvent.height;
+      final format = frameEvent.format;
+
+      log('Processing frame: format=$format, size=${width}x${height}, bytes=${imageData.length}');
+
+      // Update image size for overlay
+      _imageSize = Size(width.toDouble(), height.toDouble());
+
+      // Create InputImage based on format
+      InputImage? inputImage;
+
+      if (format == 'yuyv') {
+        // Convert YUYV to NV21 for ML Kit
+        final nv21Data = _convertYUYVtoNV21(imageData, width, height);
+        if (nv21Data != null) {
+          inputImage = InputImage.fromBytes(
+            bytes: nv21Data,
+            metadata: InputImageMetadata(
+              size: Size(width.toDouble(), height.toDouble()),
+              rotation: InputImageRotation.rotation0deg,
+              format: InputImageFormat.nv21,
+              bytesPerRow: width,
+            ),
+          );
+        }
+      } else if (format == 'mjpeg') {
+        // Decode MJPEG to NV21 for ML Kit
+        // final nv21Data = _convertMJPEGtoNV21(imageData, width, height);
+        if (imageData != null) {
+          inputImage = InputImage.fromBytes(
+            bytes: imageData,
+            metadata: InputImageMetadata(
+              size: Size(width.toDouble(), height.toDouble()),
+              rotation: InputImageRotation.rotation0deg,
+              format: InputImageFormat.nv21,
+              bytesPerRow: width,
+            ),
+          );
+        } else {
+          log('Failed to convert MJPEG to NV21');
+          return;
+        }
+      } else {
+        log('Unsupported format for ML Kit: $format');
+        return;
+      }
+
+      if (inputImage != null) {
+        // Run pose detection
+        final poses = await _poseDetector.processImage(inputImage);
+
+        final processingTime = DateTime.now().millisecondsSinceEpoch - startTime;
+        log('Pose detection completed in ${processingTime}ms, found ${poses.length} poses');
+
+        if (mounted) {
+          setState(() {
+            _detectedPoses = poses;
+          });
+        }
+      }
+    } catch (e) {
+      log('_processFrameForPoseDetection => ERROR: $e');
+    } finally {
+      _isDetecting = false;
+    }
+  }
+
+  // Convert YUYV (YUV 4:2:2) to NV21 for ML Kit
+  Uint8List? _convertYUYVtoNV21(Uint8List yuyv, int width, int height) {
+    try {
+      // YUYV format: 2 bytes per pixel (Y0 U0 Y1 V0 | Y2 U1 Y3 V1 | ...)
+      final int frameSize = width * height;
+      final int chromaSize = frameSize ~/ 4;
+
+      final nv21 = Uint8List(frameSize + chromaSize * 2);
+
+      int yIndex = 0;
+      int uvIndex = frameSize;
+
+      for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i += 2) {
+          int yuyvIndex = j * width * 2 + i * 2;
+
+          // Extract Y values
+          nv21[yIndex++] = yuyv[yuyvIndex]; // Y0
+          nv21[yIndex++] = yuyv[yuyvIndex + 2]; // Y1
+
+          // Extract and subsample U/V values (only on even rows)
+          if (j % 2 == 0) {
+            nv21[uvIndex++] = yuyv[yuyvIndex + 3]; // V
+            nv21[uvIndex++] = yuyv[yuyvIndex + 1]; // U
+          }
+        }
+      }
+
+      return nv21;
+    } catch (e) {
+      log('Error converting YUYV to NV21: $e');
+      return null;
+    }
+  }
+
+  // Convert MJPEG to NV21 for ML Kit
+  Uint8List? _convertMJPEGtoNV21(Uint8List mjpegData, int width, int height) {
+    try {
+      // Decode JPEG image
+      final image = img.decodeJpg(mjpegData);
+      if (image == null) {
+        log('Failed to decode MJPEG image');
+        return null;
+      }
+
+      // Resize image if needed
+      final resizedImage =
+          (image.width != width || image.height != height)
+              ? img.copyResize(image, width: width, height: height)
+              : image;
+
+      // Calculate sizes
+      final int ySize = width * height;
+      final int uvSize = ySize ~/ 2;
+      final nv21 = Uint8List(ySize + uvSize);
+
+      // Convert RGB to YUV NV21
+      int yIndex = 0;
+      int uvIndex = ySize;
+
+      for (int j = 0; j < height; j++) {
+        for (int i = 0; i < width; i++) {
+          final pixel = resizedImage.getPixel(i, j);
+          // Extract RGB values from pixel (ABGR format in image package)
+          final r = pixel.r.toInt();
+          final g = pixel.g.toInt();
+          final b = pixel.b.toInt();
+
+          // Convert RGB to Y
+          final y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
+          nv21[yIndex++] = y.clamp(0, 255);
+
+          // Sample U and V values for every 2x2 block
+          if (i % 2 == 0 && j % 2 == 0) {
+            final u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
+            final v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
+
+            // NV21 format: interleaved VU
+            nv21[uvIndex++] = v.clamp(0, 255);
+            nv21[uvIndex++] = u.clamp(0, 255);
+          }
+        }
+      }
+
+      log('Successfully converted MJPEG to NV21: ${resizedImage.width}x${resizedImage.height}');
+      return nv21;
+    } catch (e) {
+      log('Error converting MJPEG to NV21: $e');
+      return null;
+    }
   }
 }

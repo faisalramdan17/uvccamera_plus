@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:uvccamera/uvccamera.dart';
 
-import 'uvccamera_image_stream_demo.dart';
 import 'uvccamera_widget.dart';
 
 class UvcCameraDeviceScreen extends StatelessWidget {
@@ -14,22 +13,10 @@ class UvcCameraDeviceScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(device.name),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.camera_alt),
-            tooltip: 'Image Stream Demo',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => UvcCameraImageStreamDemo(device: device),
-                ),
-              );
-            },
-          ),
-        ],
       ),
-      body: Center(child: UvcCameraWidget(device: device)),
+      body: Center(
+        child: UvcCameraWidget(device: device),
+      ),
     );
   }
 }
