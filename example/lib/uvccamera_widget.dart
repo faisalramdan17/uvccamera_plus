@@ -41,6 +41,11 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
   List<Pose> _detectedPoses = [];
   Size _imageSize = Size.zero;
 
+  // Frame throttling for Android 14 compatibility
+  DateTime _lastFrameProcessed = DateTime.now();
+  static const int _frameProcessingIntervalMs = 100; // Process max 10 FPS
+  bool _isStreamActive = false;
+
   @override
   void initState() {
     super.initState();
@@ -371,15 +376,31 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                             backgroundColor: Colors.white,
                             onPressed: () async {
                               try {
+                                // Prevent multiple stream starts
+                                if (_isStreamActive) {
+                                  log('Stream already active, ignoring request');
+                                  return;
+                                }
+
+                                _isStreamActive = true;
+
                                 // Start streaming with pose detection
                                 await _cameraController!.startImageStream((UvcCameraFrameEvent frameEvent) {
+                                  // Frame throttling for Android 14 compatibility
+                                  final now = DateTime.now();
+                                  if (now.difference(_lastFrameProcessed).inMilliseconds < _frameProcessingIntervalMs) {
+                                    return; // Skip this frame
+                                  }
+                                  _lastFrameProcessed = now;
+
                                   log('Frame received: ${frameEvent.imageData.length} bytes');
                                   log('Resolution: ${frameEvent.width}x${frameEvent.height}');
 
-                                  // Process raw image data with ML Kit pose detection
+                                  // Process raw image data with ML Kit pose detection (async)
                                   _processFrameForPoseDetection(frameEvent);
                                 });
                               } catch (e) {
+                                _isStreamActive = false;
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
                                 }
@@ -391,8 +412,26 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                           FloatingActionButton(
                             backgroundColor: Colors.white,
                             onPressed: () async {
-                              // Stop streaming
-                              await _cameraController!.stopImageStream();
+                              try {
+                                // Stop streaming
+                                await _cameraController!.stopImageStream();
+                                _isStreamActive = false;
+
+                                // Clear pose detection state
+                                if (mounted) {
+                                  setState(() {
+                                    _detectedPoses.clear();
+                                  });
+                                }
+                              } catch (e) {
+                                _isStreamActive = false;
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(
+                                    context,
+                                  ).showSnackBar(SnackBar(content: Text('Error stopping stream: $e')));
+                                }
+                                log('Error stopping image stream: $e');
+                              }
                             },
                             child: Icon(Icons.stop, color: Colors.black),
                           ),
@@ -411,9 +450,13 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
     );
   }
 
-  // Process frames for ML Kit pose detection
+  // Process frame for pose detection using ML Kit
   Future<void> _processFrameForPoseDetection(UvcCameraFrameEvent frameEvent) async {
-    if (_isDetecting) return;
+    // Skip if already processing
+    if (_isDetecting) {
+      log('Skipping frame - already processing');
+      return;
+    }
 
     _isDetecting = true;
     final startTime = DateTime.now().millisecondsSinceEpoch;
@@ -429,7 +472,7 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
       // Update image size for overlay
       _imageSize = Size(width.toDouble(), height.toDouble());
 
-      // Create InputImage based on format
+      // Create InputImage
       final inputImage = InputImage.fromBytes(
         bytes: imageData,
         metadata: InputImageMetadata(
@@ -440,166 +483,44 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
         ),
       );
 
-      // Run pose detection
-      final poses = await _poseDetector.processImage(inputImage);
+      // Run pose detection with timeout protection for Android 14
+      final poses = await _poseDetector
+          .processImage(inputImage)
+          .timeout(
+            Duration(milliseconds: 800), // Max 800ms for pose detection
+            onTimeout: () {
+              log('Pose detection timeout - skipping frame');
+              return <Pose>[];
+            },
+          );
 
       final processingTime = DateTime.now().millisecondsSinceEpoch - startTime;
       log('Pose detection completed in ${processingTime}ms, found ${poses.length} poses');
 
-      if (mounted) {
+      // Update UI only if widget is still mounted and processing time is reasonable
+      if (mounted && processingTime < 1000) {
         setState(() {
           _detectedPoses = poses;
         });
       }
-
-      // if (format == 'yuyv') {
-      //   // Convert YUYV to NV21 for ML Kit
-      //   // final nv21Data = _convertYUYVtoNV21(imageData, width, height);
-      //   if (nv21Data != null) {
-      //     inputImage = InputImage.fromBytes(
-      //       bytes: nv21Data,
-      //       metadata: InputImageMetadata(
-      //         size: Size(width.toDouble(), height.toDouble()),
-      //         rotation: InputImageRotation.rotation0deg,
-      //         format: InputImageFormat.nv21,
-      //         bytesPerRow: width,
-      //       ),
-      //     );
-      //   }
-      // } else if (format == 'mjpeg') {
-      //   // Decode MJPEG to NV21 for ML Kit
-      //   // final nv21Data = _convertMJPEGtoNV21(imageData, width, height);
-      //   if (imageData != null) {
-      //     inputImage = InputImage.fromBytes(
-      //       bytes: imageData,
-      //       metadata: InputImageMetadata(
-      //         size: Size(width.toDouble(), height.toDouble()),
-      //         rotation: InputImageRotation.rotation0deg,
-      //         format: InputImageFormat.nv21,
-      //         bytesPerRow: width,
-      //       ),
-      //     );
-      //   } else {
-      //     log('Failed to convert MJPEG to NV21');
-      //     return;
-      //   }
-      // } else {
-      //   log('Unsupported format for ML Kit: $format');
-      //   return;
-      // }
-
-      // if (inputImage != null) {
-      //   // Run pose detection
-      //   final poses = await _poseDetector.processImage(inputImage);
-
-      //   final processingTime = DateTime.now().millisecondsSinceEpoch - startTime;
-      //   log('Pose detection completed in ${processingTime}ms, found ${poses.length} poses');
-
-      //   if (mounted) {
-      //     setState(() {
-      //       _detectedPoses = poses;
-      //     });
-      //   }
-      // }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      // Handle different types of errors appropriately
+      if (e.toString().contains('TimeoutException')) {
+        log('Frame processing timeout - this is normal on slower devices');
+      } else {
+        log('_processFrameForPoseDetection => ERROR: $e');
+        // Only show error SnackBar for serious errors, not timeouts
+        if (mounted && !e.toString().contains('TimeoutException')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Pose detection error: ${e.toString().substring(0, 50)}...'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
       }
-      log('_processFrameForPoseDetection => ERROR: $e');
     } finally {
       _isDetecting = false;
-    }
-  }
-
-  // Convert YUYV (YUV 4:2:2) to NV21 for ML Kit
-  Uint8List? _convertYUYVtoNV21(Uint8List yuyv, int width, int height) {
-    try {
-      // YUYV format: 2 bytes per pixel (Y0 U0 Y1 V0 | Y2 U1 Y3 V1 | ...)
-      final int frameSize = width * height;
-      final int chromaSize = frameSize ~/ 4;
-
-      final nv21 = Uint8List(frameSize + chromaSize * 2);
-
-      int yIndex = 0;
-      int uvIndex = frameSize;
-
-      for (int j = 0; j < height; j++) {
-        for (int i = 0; i < width; i += 2) {
-          int yuyvIndex = j * width * 2 + i * 2;
-
-          // Extract Y values
-          nv21[yIndex++] = yuyv[yuyvIndex]; // Y0
-          nv21[yIndex++] = yuyv[yuyvIndex + 2]; // Y1
-
-          // Extract and subsample U/V values (only on even rows)
-          if (j % 2 == 0) {
-            nv21[uvIndex++] = yuyv[yuyvIndex + 3]; // V
-            nv21[uvIndex++] = yuyv[yuyvIndex + 1]; // U
-          }
-        }
-      }
-
-      return nv21;
-    } catch (e) {
-      log('Error converting YUYV to NV21: $e');
-      return null;
-    }
-  }
-
-  // Convert MJPEG to NV21 for ML Kit
-  Uint8List? _convertMJPEGtoNV21(Uint8List mjpegData, int width, int height) {
-    try {
-      // Decode JPEG image
-      final image = img.decodeJpg(mjpegData);
-      if (image == null) {
-        log('Failed to decode MJPEG image');
-        return null;
-      }
-
-      // Resize image if needed
-      final resizedImage =
-          (image.width != width || image.height != height)
-              ? img.copyResize(image, width: width, height: height)
-              : image;
-
-      // Calculate sizes
-      final int ySize = width * height;
-      final int uvSize = ySize ~/ 2;
-      final nv21 = Uint8List(ySize + uvSize);
-
-      // Convert RGB to YUV NV21
-      int yIndex = 0;
-      int uvIndex = ySize;
-
-      for (int j = 0; j < height; j++) {
-        for (int i = 0; i < width; i++) {
-          final pixel = resizedImage.getPixel(i, j);
-          // Extract RGB values from pixel (ABGR format in image package)
-          final r = pixel.r.toInt();
-          final g = pixel.g.toInt();
-          final b = pixel.b.toInt();
-
-          // Convert RGB to Y
-          final y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-          nv21[yIndex++] = y.clamp(0, 255);
-
-          // Sample U and V values for every 2x2 block
-          if (i % 2 == 0 && j % 2 == 0) {
-            final u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
-            final v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-
-            // NV21 format: interleaved VU
-            nv21[uvIndex++] = v.clamp(0, 255);
-            nv21[uvIndex++] = u.clamp(0, 255);
-          }
-        }
-      }
-
-      log('Successfully converted MJPEG to NV21: ${resizedImage.width}x${resizedImage.height}');
-      return nv21;
-    } catch (e) {
-      log('Error converting MJPEG to NV21: $e');
-      return null;
     }
   }
 }
