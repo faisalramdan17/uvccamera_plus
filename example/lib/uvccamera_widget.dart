@@ -370,14 +370,21 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                           FloatingActionButton(
                             backgroundColor: Colors.white,
                             onPressed: () async {
-                              // Start streaming with pose detection
-                              await _cameraController!.startImageStream((UvcCameraFrameEvent frameEvent) {
-                                log('Frame received: ${frameEvent.imageData.length} bytes');
-                                log('Resolution: ${frameEvent.width}x${frameEvent.height}');
+                              try {
+                                // Start streaming with pose detection
+                                await _cameraController!.startImageStream((UvcCameraFrameEvent frameEvent) {
+                                  log('Frame received: ${frameEvent.imageData.length} bytes');
+                                  log('Resolution: ${frameEvent.width}x${frameEvent.height}');
 
-                                // Process raw image data with ML Kit pose detection
-                                _processFrameForPoseDetection(frameEvent);
-                              });
+                                  // Process raw image data with ML Kit pose detection
+                                  _processFrameForPoseDetection(frameEvent);
+                                });
+                              } catch (e) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                                }
+                                log('Error starting image stream: $e');
+                              }
                             },
                             child: Icon(Icons.play_arrow, color: Colors.black),
                           ),
@@ -423,58 +430,81 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
       _imageSize = Size(width.toDouble(), height.toDouble());
 
       // Create InputImage based on format
-      InputImage? inputImage;
+      final inputImage = InputImage.fromBytes(
+        bytes: imageData,
+        metadata: InputImageMetadata(
+          size: Size(width.toDouble(), height.toDouble()),
+          rotation: InputImageRotation.rotation0deg,
+          format: InputImageFormat.nv21,
+          bytesPerRow: width,
+        ),
+      );
 
-      if (format == 'yuyv') {
-        // Convert YUYV to NV21 for ML Kit
-        final nv21Data = _convertYUYVtoNV21(imageData, width, height);
-        if (nv21Data != null) {
-          inputImage = InputImage.fromBytes(
-            bytes: nv21Data,
-            metadata: InputImageMetadata(
-              size: Size(width.toDouble(), height.toDouble()),
-              rotation: InputImageRotation.rotation0deg,
-              format: InputImageFormat.nv21,
-              bytesPerRow: width,
-            ),
-          );
-        }
-      } else if (format == 'mjpeg') {
-        // Decode MJPEG to NV21 for ML Kit
-        // final nv21Data = _convertMJPEGtoNV21(imageData, width, height);
-        if (imageData != null) {
-          inputImage = InputImage.fromBytes(
-            bytes: imageData,
-            metadata: InputImageMetadata(
-              size: Size(width.toDouble(), height.toDouble()),
-              rotation: InputImageRotation.rotation0deg,
-              format: InputImageFormat.nv21,
-              bytesPerRow: width,
-            ),
-          );
-        } else {
-          log('Failed to convert MJPEG to NV21');
-          return;
-        }
-      } else {
-        log('Unsupported format for ML Kit: $format');
-        return;
+      // Run pose detection
+      final poses = await _poseDetector.processImage(inputImage);
+
+      final processingTime = DateTime.now().millisecondsSinceEpoch - startTime;
+      log('Pose detection completed in ${processingTime}ms, found ${poses.length} poses');
+
+      if (mounted) {
+        setState(() {
+          _detectedPoses = poses;
+        });
       }
 
-      if (inputImage != null) {
-        // Run pose detection
-        final poses = await _poseDetector.processImage(inputImage);
+      // if (format == 'yuyv') {
+      //   // Convert YUYV to NV21 for ML Kit
+      //   // final nv21Data = _convertYUYVtoNV21(imageData, width, height);
+      //   if (nv21Data != null) {
+      //     inputImage = InputImage.fromBytes(
+      //       bytes: nv21Data,
+      //       metadata: InputImageMetadata(
+      //         size: Size(width.toDouble(), height.toDouble()),
+      //         rotation: InputImageRotation.rotation0deg,
+      //         format: InputImageFormat.nv21,
+      //         bytesPerRow: width,
+      //       ),
+      //     );
+      //   }
+      // } else if (format == 'mjpeg') {
+      //   // Decode MJPEG to NV21 for ML Kit
+      //   // final nv21Data = _convertMJPEGtoNV21(imageData, width, height);
+      //   if (imageData != null) {
+      //     inputImage = InputImage.fromBytes(
+      //       bytes: imageData,
+      //       metadata: InputImageMetadata(
+      //         size: Size(width.toDouble(), height.toDouble()),
+      //         rotation: InputImageRotation.rotation0deg,
+      //         format: InputImageFormat.nv21,
+      //         bytesPerRow: width,
+      //       ),
+      //     );
+      //   } else {
+      //     log('Failed to convert MJPEG to NV21');
+      //     return;
+      //   }
+      // } else {
+      //   log('Unsupported format for ML Kit: $format');
+      //   return;
+      // }
 
-        final processingTime = DateTime.now().millisecondsSinceEpoch - startTime;
-        log('Pose detection completed in ${processingTime}ms, found ${poses.length} poses');
+      // if (inputImage != null) {
+      //   // Run pose detection
+      //   final poses = await _poseDetector.processImage(inputImage);
 
-        if (mounted) {
-          setState(() {
-            _detectedPoses = poses;
-          });
-        }
-      }
+      //   final processingTime = DateTime.now().millisecondsSinceEpoch - startTime;
+      //   log('Pose detection completed in ${processingTime}ms, found ${poses.length} poses');
+
+      //   if (mounted) {
+      //     setState(() {
+      //       _detectedPoses = poses;
+      //     });
+      //   }
+      // }
     } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
       log('_processFrameForPoseDetection => ERROR: $e');
     } finally {
       _isDetecting = false;

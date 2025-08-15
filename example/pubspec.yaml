@@ -1,6 +1,7 @@
 name: uvccamera_example
 description: "Demonstrates how to use the uvccamera plugin."
 publish_to: none
+version: 0.0.1+1
 
 environment:
   sdk: ^3.7.0
