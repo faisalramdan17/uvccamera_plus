@@ -7,6 +7,7 @@ import android.graphics.Rect;
 import android.graphics.YuvImage;
 import android.hardware.usb.UsbDevice;
 import android.media.MediaRecorder;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -14,6 +15,7 @@ import android.util.Pair;
 
 import androidx.annotation.NonNull;
 
+import com.serenegiant.usb.IFrameCallback;
 import com.serenegiant.usb.Size;
 import com.serenegiant.usb.USBMonitor;
 import com.serenegiant.usb.UVCCamera;
@@ -42,6 +44,26 @@ import io.flutter.view.TextureRegistry;
      * Log tag
      */
     private static final String TAG = UvcCameraPlatform.class.getSimpleName();
+    
+    /**
+     * Flag to enable Android 14 workaround mode
+     */
+    private static final boolean USE_ANDROID_14_WORKAROUND = Build.VERSION.SDK_INT >= 34;
+    
+    /**
+     * Handler for snapshot-based streaming in workaround mode
+     */
+    private final Map<Integer, Handler> snapshotHandlers = new ConcurrentHashMap<>();
+    
+    /**
+     * Runnable tasks for snapshot-based streaming
+     */
+    private final Map<Integer, Runnable> snapshotRunnables = new ConcurrentHashMap<>();
+    
+    /**
+     * Flag to track if snapshot mode is active
+     */
+    private final Map<Integer, Boolean> snapshotModeActive = new ConcurrentHashMap<>();
 
     /**
      * libuvc's {@code uvc_status_class} to {@code UvcCameraStatusClass} enum mapping.
@@ -900,27 +922,33 @@ import io.flutter.view.TextureRegistry;
      * @param cameraId the camera ID
      */
     public void attachToCameraFrameCallback(final int cameraId) {
-        Log.v(TAG, "attachToCameraFrameCallback: cameraId=" + cameraId);
+        Log.v(TAG, "attachToCameraFrameCallback: cameraId=" + cameraId + ", Android14Workaround=" + USE_ANDROID_14_WORKAROUND);
 
         final var cameraResources = camerasResources.get(cameraId);
         if (cameraResources == null) {
             throw new IllegalArgumentException("Camera resources not found: " + cameraId);
         }
 
-        try {
-            // Ensure previous callback is cleaned up first
-            cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_YUV420SP);
-            
-            // Small delay to ensure cleanup
-            Thread.sleep(50);
-            
-            // Set frame callback to start receiving frames
-            cameraResources.camera().setFrameCallback(cameraResources.frameCallback(), UVCCamera.PIXEL_FORMAT_YUV420SP);
-            
-            Log.v(TAG, "Frame callback attached successfully for camera: " + cameraId);
-        } catch (Exception e) {
-            Log.e(TAG, "Error attaching frame callback for camera: " + cameraId, e);
-            throw new RuntimeException("Failed to attach frame callback", e);
+        if (USE_ANDROID_14_WORKAROUND) {
+            // Android 14 workaround: Use periodic frame capture instead of native callback
+            startPeriodicFrameCapture(cameraId, cameraResources);
+        } else {
+            // Normal mode: Use native frame callback
+            try {
+                // Ensure previous callback is cleaned up first
+                cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_YUV420SP);
+                
+                // Small delay to ensure cleanup
+                Thread.sleep(50);
+                
+                // Set frame callback to start receiving frames
+                cameraResources.camera().setFrameCallback(cameraResources.frameCallback(), UVCCamera.PIXEL_FORMAT_YUV420SP);
+                
+                Log.v(TAG, "Frame callback attached successfully for camera: " + cameraId);
+            } catch (Exception e) {
+                Log.e(TAG, "Error attaching frame callback for camera: " + cameraId, e);
+                throw new RuntimeException("Failed to attach frame callback", e);
+            }
         }
     }
 
@@ -930,25 +958,31 @@ import io.flutter.view.TextureRegistry;
      * @param cameraId the camera ID
      */
     public void detachFromCameraFrameCallback(final int cameraId) {
-        Log.v(TAG, "detachFromCameraFrameCallback: cameraId=" + cameraId);
+        Log.v(TAG, "detachFromCameraFrameCallback: cameraId=" + cameraId + ", Android14Workaround=" + USE_ANDROID_14_WORKAROUND);
 
-        final var cameraResources = camerasResources.get(cameraId);
-        if (cameraResources == null) {
-            Log.w(TAG, "Camera resources not found for detach: " + cameraId);
-            return; // Don't throw exception, just log warning
-        }
+        if (USE_ANDROID_14_WORKAROUND) {
+            // Android 14 workaround: Stop periodic frame capture
+            stopPeriodicFrameCapture(cameraId);
+        } else {
+            // Normal mode: Detach native frame callback
+            final var cameraResources = camerasResources.get(cameraId);
+            if (cameraResources == null) {
+                Log.w(TAG, "Camera resources not found for detach: " + cameraId);
+                return; // Don't throw exception, just log warning
+            }
 
-        try {
-            // Remove frame callback to stop receiving frames
-            cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_YUV420SP);
-            
-            // Force cleanup delay to ensure resources are released
-            Thread.sleep(100);
-            
-            Log.v(TAG, "Frame callback detached successfully for camera: " + cameraId);
-        } catch (Exception e) {
-            Log.e(TAG, "Error detaching frame callback for camera: " + cameraId, e);
-            // Don't rethrow - allow cleanup to continue
+            try {
+                // Remove frame callback to stop receiving frames
+                cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_YUV420SP);
+                
+                // Force cleanup delay to ensure resources are released
+                Thread.sleep(100);
+                
+                Log.v(TAG, "Frame callback detached successfully for camera: " + cameraId);
+            } catch (Exception e) {
+                Log.e(TAG, "Error detaching frame callback for camera: " + cameraId, e);
+                // Don't rethrow - allow cleanup to continue
+            }
         }
     }
 
@@ -1242,6 +1276,166 @@ import io.flutter.view.TextureRegistry;
         mediaRecorder.reset();
     }
 
+    /**
+     * Starts snapshot-based streaming for Android 14 workaround
+     * This completely bypasses the native frame callback mechanism
+     *
+     * @param cameraId the camera ID
+     * @param cameraResources the camera resources
+     */
+    private void startPeriodicFrameCapture(final int cameraId, final UvcCameraResources cameraResources) {
+        Log.v(TAG, "Starting Android 14 SNAPSHOT mode - bypassing native callbacks entirely: cameraId=" + cameraId);
+        
+        // Stop any existing snapshot streaming
+        stopPeriodicFrameCapture(cameraId);
+        
+        // Mark snapshot mode as active
+        snapshotModeActive.put(cameraId, true);
+        
+        // Create handler for snapshot streaming
+        final Handler handler = new Handler(Looper.getMainLooper());
+        snapshotHandlers.put(cameraId, handler);
+        
+        // Create runnable for periodic snapshots
+        final Runnable snapshotRunnable = new Runnable() {
+            private boolean isCapturing = false;
+            private long frameCount = 0;
+            private long lastSuccessTime = System.currentTimeMillis();
+            private int consecutiveFailures = 0;
+            
+            @Override
+            public void run() {
+                // Check if we should continue
+                if (!snapshotModeActive.getOrDefault(cameraId, false)) {
+                    Log.v(TAG, "Snapshot mode no longer active for camera: " + cameraId);
+                    return;
+                }
+                
+                // Skip if still processing previous snapshot
+                if (isCapturing) {
+                    handler.postDelayed(this, 50);
+                    return;
+                }
+                
+                isCapturing = true;
+                frameCount++;
+                
+                try {
+                    final var camera = cameraResources.camera();
+                    final var frameCallback = cameraResources.frameCallback();
+                    
+                    if (camera != null && frameCallback != null) {
+                        // Note: We're using single-frame capture mode without file I/O
+                        
+                        // Use a single frame capture callback
+                        final IFrameCallback singleFrameCallback = new IFrameCallback() {
+                            private boolean captured = false;
+                            
+                            @Override
+                            public void onFrame(ByteBuffer frame) {
+                                if (captured) return;
+                                captured = true;
+                                
+                                try {
+                                    // Immediately remove callback to prevent multiple calls
+                                    camera.setFrameCallback(null, UVCCamera.PIXEL_FORMAT_NV21);
+                                    
+                                    // Copy frame data to avoid native memory issues
+                                    byte[] frameData = new byte[frame.remaining()];
+                                    frame.get(frameData);
+                                    
+                                    // Send to Flutter callback
+                                    ByteBuffer safeCopy = ByteBuffer.wrap(frameData);
+                                    frameCallback.onFrame(safeCopy);
+                                    
+                                    lastSuccessTime = System.currentTimeMillis();
+                                    consecutiveFailures = 0;
+                                    
+                                    if (frameCount % 10 == 0) {
+                                        Log.v(TAG, "Snapshot streaming progress: " + frameCount + " frames captured");
+                                    }
+                                } catch (Throwable t) {
+                                    Log.e(TAG, "Error processing snapshot frame", t);
+                                    consecutiveFailures++;
+                                }
+                            }
+                        };
+                        
+                        // Attach callback for single frame capture
+                        camera.setFrameCallback(singleFrameCallback, UVCCamera.PIXEL_FORMAT_NV21);
+                        
+                        // Schedule callback removal after timeout
+                        handler.postDelayed(() -> {
+                            try {
+                                camera.setFrameCallback(null, UVCCamera.PIXEL_FORMAT_NV21);
+                            } catch (Exception e) {
+                                Log.w(TAG, "Error removing snapshot callback", e);
+                            }
+                        }, 100);
+                        
+                    }
+                } catch (Throwable t) {
+                    Log.e(TAG, "Error in snapshot capture", t);
+                    consecutiveFailures++;
+                } finally {
+                    isCapturing = false;
+                }
+                
+                // Check for too many failures
+                if (consecutiveFailures > 10) {
+                    Log.e(TAG, "Too many consecutive failures in snapshot mode, stopping");
+                    snapshotModeActive.put(cameraId, false);
+                    return;
+                }
+                
+                // Schedule next snapshot (adaptive rate based on success)
+                int delay = consecutiveFailures > 0 ? 500 : 200; // Slower if failing
+                handler.postDelayed(this, delay);
+            }
+        };
+        
+        // Store the runnable
+        snapshotRunnables.put(cameraId, snapshotRunnable);
+        
+        // Start snapshot streaming
+        handler.postDelayed(snapshotRunnable, 500); // Initial delay
+        
+        Log.v(TAG, "Android 14 SNAPSHOT mode started - completely bypassing native streaming");
+    }
+    
+    /**
+     * Stops snapshot-based streaming for Android 14 workaround
+     *
+     * @param cameraId the camera ID
+     */
+    private void stopPeriodicFrameCapture(final int cameraId) {
+        Log.v(TAG, "Stopping Android 14 SNAPSHOT mode for camera: " + cameraId);
+        
+        // Mark as inactive
+        snapshotModeActive.put(cameraId, false);
+        
+        // Cancel the runnable
+        Handler handler = snapshotHandlers.remove(cameraId);
+        Runnable runnable = snapshotRunnables.remove(cameraId);
+        
+        if (handler != null && runnable != null) {
+            handler.removeCallbacks(runnable);
+        }
+        
+        // Ensure callback is removed
+        final var cameraResources = camerasResources.get(cameraId);
+        if (cameraResources != null) {
+            try {
+                cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_NV21);
+                Thread.sleep(100);
+            } catch (Exception e) {
+                Log.w(TAG, "Error ensuring callback removal", e);
+            }
+        }
+        
+        Log.v(TAG, "Android 14 SNAPSHOT mode stopped for camera: " + cameraId);
+    }
+    
     /**
      * Finds the UVC camera device by name
      *
