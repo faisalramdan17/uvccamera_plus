@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:uvccamera/uvccamera.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image/image.dart' as img;
@@ -376,6 +377,11 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                             backgroundColor: Colors.white,
                             onPressed: () async {
                               try {
+                                Sentry.logger.info(
+                                  "User triggered Play button",
+                                  attributes: {'action': SentryLogAttribute.string('test_error_button_click')},
+                                );
+
                                 // Prevent multiple stream starts
                                 if (_isStreamActive) {
                                   log('Stream already active, ignoring request');
@@ -399,12 +405,16 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                                   // Process raw image data with ML Kit pose detection (async)
                                   _processFrameForPoseDetection(frameEvent);
                                 });
-                              } catch (e) {
+                              } catch (e, s) {
                                 _isStreamActive = false;
                                 if (context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
                                 }
                                 log('Error starting image stream: $e');
+                                Sentry.logger.error(
+                                  "User triggered Play button, Error: $e, Stacktrace: $s",
+                                  attributes: {'action': SentryLogAttribute.string('test_error_button_click')},
+                                );
                               }
                             },
                             child: Icon(Icons.play_arrow, color: Colors.black),
