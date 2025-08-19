@@ -907,8 +907,21 @@ import io.flutter.view.TextureRegistry;
             throw new IllegalArgumentException("Camera resources not found: " + cameraId);
         }
 
-        // Set frame callback to start receiving frames
-        cameraResources.camera().setFrameCallback(cameraResources.frameCallback(), UVCCamera.PIXEL_FORMAT_YUV420SP);
+        try {
+            // Ensure previous callback is cleaned up first
+            cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_YUV420SP);
+            
+            // Small delay to ensure cleanup
+            Thread.sleep(50);
+            
+            // Set frame callback to start receiving frames
+            cameraResources.camera().setFrameCallback(cameraResources.frameCallback(), UVCCamera.PIXEL_FORMAT_YUV420SP);
+            
+            Log.v(TAG, "Frame callback attached successfully for camera: " + cameraId);
+        } catch (Exception e) {
+            Log.e(TAG, "Error attaching frame callback for camera: " + cameraId, e);
+            throw new RuntimeException("Failed to attach frame callback", e);
+        }
     }
 
     /**
@@ -921,11 +934,22 @@ import io.flutter.view.TextureRegistry;
 
         final var cameraResources = camerasResources.get(cameraId);
         if (cameraResources == null) {
-            throw new IllegalArgumentException("Camera resources not found: " + cameraId);
+            Log.w(TAG, "Camera resources not found for detach: " + cameraId);
+            return; // Don't throw exception, just log warning
         }
 
-        // Remove frame callback to stop receiving frames
-        cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_YUV420SP);
+        try {
+            // Remove frame callback to stop receiving frames
+            cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_YUV420SP);
+            
+            // Force cleanup delay to ensure resources are released
+            Thread.sleep(100);
+            
+            Log.v(TAG, "Frame callback detached successfully for camera: " + cameraId);
+        } catch (Exception e) {
+            Log.e(TAG, "Error detaching frame callback for camera: " + cameraId, e);
+            // Don't rethrow - allow cleanup to continue
+        }
     }
 
     /**

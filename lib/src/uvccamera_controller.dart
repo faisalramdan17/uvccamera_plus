@@ -258,25 +258,114 @@ class UvcCameraController extends ValueNotifier<UvcCameraControllerState> {
     }
 
     try {
+      // Ensure clean state before starting
+      await _ensureCleanStreamState();
+      
       // Store the callback
       _onImageAvailable = onImageAvailable;
       
-      // Start native frame streaming
-      await UvcCameraPlatformInterface.instance.attachToCameraFrameCallback(_cameraId!);
+      // Start native frame streaming with retry logic
+      await _startNativeStreamingWithRetry();
       
       // Subscribe to frame events and call the callback
-      _frameEventSubscription = cameraFrameEvents.listen((frameEvent) {
-        _onImageAvailable?.call(frameEvent);
-      });
+      _frameEventSubscription = cameraFrameEvents.listen(
+        (frameEvent) {
+          try {
+            _onImageAvailable?.call(frameEvent);
+          } catch (e) {
+            print('Error in frame callback: $e');
+          }
+        },
+        onError: (error) {
+          print('Frame stream error: $error');
+          _handleStreamError(error);
+        },
+        cancelOnError: false, // Don't cancel on single errors
+      );
       
       // Update state
       value = value.copyWith(isStreamingImages: true);
     } catch (e) {
       // Clean up on error
-      _onImageAvailable = null;
-      await _frameEventSubscription?.cancel();
-      _frameEventSubscription = null;
+      await _cleanupStreamResources();
       rethrow;
+    }
+  }
+  
+  /// Ensure clean state before starting stream
+  Future<void> _ensureCleanStreamState() async {
+    try {
+      if (_frameEventSubscription != null) {
+        await _frameEventSubscription!.cancel();
+        _frameEventSubscription = null;
+      }
+      
+      // Try to detach any existing callback
+      try {
+        await UvcCameraPlatformInterface.instance.detachFromCameraFrameCallback(_cameraId!);
+      } catch (e) {
+        // Ignore errors during cleanup
+        print('Cleanup warning: $e');
+      }
+      
+      // Small delay to ensure cleanup
+      await Future.delayed(Duration(milliseconds: 100));
+    } catch (e) {
+      print('Error ensuring clean state: $e');
+    }
+  }
+  
+  /// Start native streaming with retry logic
+  Future<void> _startNativeStreamingWithRetry() async {
+    int retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
+      try {
+        await UvcCameraPlatformInterface.instance.attachToCameraFrameCallback(_cameraId!);
+        return; // Success
+      } catch (e) {
+        retryCount++;
+        print('Native streaming attempt $retryCount failed: $e');
+        
+        if (retryCount < maxRetries) {
+          // Wait before retry
+          await Future.delayed(Duration(milliseconds: 200 * retryCount));
+          
+          // Try cleanup before retry
+          try {
+            await UvcCameraPlatformInterface.instance.detachFromCameraFrameCallback(_cameraId!);
+          } catch (cleanupError) {
+            // Ignore cleanup errors
+          }
+        } else {
+          rethrow; // Max retries reached
+        }
+      }
+    }
+  }
+  
+  /// Handle stream errors
+  void _handleStreamError(dynamic error) {
+    print('Handling stream error: $error');
+    
+    // Don't immediately stop streaming, just log the error
+    // The circuit breaker in native code will handle persistent errors
+  }
+  
+  /// Clean up stream resources
+  Future<void> _cleanupStreamResources() async {
+    _onImageAvailable = null;
+    
+    if (_frameEventSubscription != null) {
+      await _frameEventSubscription!.cancel();
+      _frameEventSubscription = null;
+    }
+    
+    try {
+      await UvcCameraPlatformInterface.instance.detachFromCameraFrameCallback(_cameraId!);
+    } catch (e) {
+      print('Error during cleanup: $e');
     }
   }
 

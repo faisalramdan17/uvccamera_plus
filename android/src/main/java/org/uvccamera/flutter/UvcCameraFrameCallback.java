@@ -51,6 +51,15 @@ import java.util.Map;
      * Processing flag to prevent overlapping
      */
     private volatile boolean isProcessing = false;
+    
+    /**
+     * Circuit breaker for error recovery
+     */
+    private volatile boolean isDisabled = false;
+    private int errorCount = 0;
+    private static final int MAX_ERRORS = 5;
+    private long lastErrorTime = 0;
+    private static final long ERROR_RESET_TIME = 5000; // 5 seconds
 
     /**
      * Constructor
@@ -69,6 +78,19 @@ import java.util.Map;
 
     @Override
     public void onFrame(ByteBuffer frame) {
+        // Circuit breaker: stop processing if too many errors
+        if (isDisabled) {
+            long currentTime = System.currentTimeMillis();
+            if (currentTime - lastErrorTime > ERROR_RESET_TIME) {
+                // Reset after timeout
+                isDisabled = false;
+                errorCount = 0;
+                android.util.Log.i(TAG, "Frame callback re-enabled after error timeout");
+            } else {
+                return; // Still disabled
+            }
+        }
+
         if (frameEventStreamHandler == null) {
             return;
         }
@@ -102,7 +124,7 @@ import java.util.Map;
                     processFrame(frame, eventSink);
                 });
             } catch (Exception e) {
-                android.util.Log.e(TAG, "Error posting frame to main thread", e);
+                handleError("Error posting frame to main thread", e);
             }
         }
     }
@@ -148,11 +170,11 @@ import java.util.Map;
             }
 
         } catch (OutOfMemoryError e) {
-            android.util.Log.e(TAG, "Out of memory processing frame", e);
+            handleError("Out of memory processing frame", e);
             // Force garbage collection
             System.gc();
         } catch (Exception e) {
-            android.util.Log.e(TAG, "Error processing frame", e);
+            handleError("Error processing frame", e);
             if (eventSink != null) {
                 try {
                     eventSink.error("FRAME_PROCESSING_ERROR", "Error processing camera frame: " + e.getMessage(), null);
@@ -163,6 +185,21 @@ import java.util.Map;
         } finally {
             // Always reset processing flag
             isProcessing = false;
+        }
+    }
+
+    /**
+     * Handle errors with circuit breaker pattern
+     */
+    private void handleError(String message, Throwable e) {
+        android.util.Log.e(TAG, message, e);
+        
+        errorCount++;
+        lastErrorTime = System.currentTimeMillis();
+        
+        if (errorCount >= MAX_ERRORS) {
+            isDisabled = true;
+            android.util.Log.e(TAG, "Frame callback disabled after " + MAX_ERRORS + " consecutive errors");
         }
     }
 }
