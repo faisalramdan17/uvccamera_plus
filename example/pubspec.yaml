@@ -7,6 +7,7 @@ environment:
   sdk: ^3.7.0
 
 dependencies:
+  sentry_flutter: ^9.6.0
   flutter:
     sdk: flutter
   uvccamera:
@@ -20,6 +21,7 @@ dependencies:
   image: ^4.1.32
 
 dev_dependencies:
+  sentry_dart_plugin: ^3.1.1
   integration_test:
     sdk: flutter
   flutter_test:
@@ -28,3 +30,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+sentry:
+  upload_debug_symbols: true
+  upload_source_maps: true
+  project: flutter
+  org: snapcode-00
