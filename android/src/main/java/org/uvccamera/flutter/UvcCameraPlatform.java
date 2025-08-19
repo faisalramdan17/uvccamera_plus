@@ -930,8 +930,17 @@ import io.flutter.view.TextureRegistry;
         }
 
         if (USE_ANDROID_14_WORKAROUND) {
-            // Android 14 workaround: Use periodic frame capture instead of native callback
-            startPeriodicFrameCapture(cameraId, cameraResources);
+            Log.i(TAG, "Android 14 Workaround: Scheduling delayed snapshot capture for camera " + cameraId);
+            // Add a delay to allow the camera to stabilize before starting snapshot mode
+            mainLooperHandler.postDelayed(() -> {
+                try {
+                    Log.i(TAG, "Android 14 Workaround: Executing snapshot capture for camera " + cameraId);
+                    startPeriodicFrameCapture(cameraId, cameraResources);
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to start snapshot capture after delay", e);
+                    castCameraErrorEvent(cameraId, "WorkaroundFailed", "Could not start snapshot mode: " + e.getMessage());
+                }
+            }, 300); // 300ms delay
         } else {
             // Normal mode: Use native frame callback
             try {

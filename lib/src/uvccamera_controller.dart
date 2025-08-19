@@ -308,8 +308,8 @@ class UvcCameraController extends ValueNotifier<UvcCameraControllerState> {
         print('Cleanup warning: $e');
       }
       
-      // Small delay to ensure cleanup
-      await Future.delayed(Duration(milliseconds: 100));
+      // Longer delay to ensure native side has fully processed the detach command
+      await Future.delayed(Duration(milliseconds: 250));
     } catch (e) {
       print('Error ensuring clean state: $e');
     }
