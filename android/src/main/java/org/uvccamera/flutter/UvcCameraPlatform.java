@@ -46,9 +46,10 @@ import io.flutter.view.TextureRegistry;
     private static final String TAG = UvcCameraPlatform.class.getSimpleName();
     
     /**
-     * Flag to enable Android 14 workaround mode
+     * Flag to enable Android 12+ workaround mode
+     * Needed for Android 12 and 14 due to UVC library stability issues
      */
-    private static final boolean USE_ANDROID_14_WORKAROUND = Build.VERSION.SDK_INT >= 34;
+    private static final boolean USE_ANDROID_14_WORKAROUND = Build.VERSION.SDK_INT >= 32;
     
     /**
      * Handler for snapshot-based streaming in workaround mode
