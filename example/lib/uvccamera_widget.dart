@@ -8,7 +8,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:uvccamera/uvccamera.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
-import 'package:image/image.dart' as img;
 
 import 'pose_painter.dart';
 
@@ -349,30 +348,30 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
                       return Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          FloatingActionButton(
-                            backgroundColor: Colors.white,
-                            onPressed:
-                                value.isTakingPicture
-                                    ? null
-                                    : () async {
-                                      await _takePicture();
-                                    },
-                            child: Icon(Icons.camera_alt, color: Colors.black),
-                          ),
-                          FloatingActionButton(
-                            backgroundColor: value.isRecordingVideo ? Colors.red : Colors.white,
-                            onPressed: () async {
-                              if (value.isRecordingVideo) {
-                                await _stopVideoRecording();
-                              } else {
-                                await _startVideoRecording(value.previewMode!);
-                              }
-                            },
-                            child: Icon(
-                              value.isRecordingVideo ? Icons.stop : Icons.videocam,
-                              color: value.isRecordingVideo ? Colors.white : Colors.black,
-                            ),
-                          ),
+                          // FloatingActionButton(
+                          //   backgroundColor: Colors.white,
+                          //   onPressed:
+                          //       value.isTakingPicture
+                          //           ? null
+                          //           : () async {
+                          //             await _takePicture();
+                          //           },
+                          //   child: Icon(Icons.camera_alt, color: Colors.black),
+                          // ),
+                          // FloatingActionButton(
+                          //   backgroundColor: value.isRecordingVideo ? Colors.red : Colors.white,
+                          //   onPressed: () async {
+                          //     if (value.isRecordingVideo) {
+                          //       await _stopVideoRecording();
+                          //     } else {
+                          //       await _startVideoRecording(value.previewMode!);
+                          //     }
+                          //   },
+                          //   child: Icon(
+                          //     value.isRecordingVideo ? Icons.stop : Icons.videocam,
+                          //     color: value.isRecordingVideo ? Colors.white : Colors.black,
+                          //   ),
+                          // ),
                           FloatingActionButton(
                             backgroundColor: Colors.white,
                             onPressed: () async {
@@ -477,14 +476,24 @@ class _UvcCameraWidgetState extends State<UvcCameraWidget> with WidgetsBindingOb
       final height = frameEvent.height;
       final format = frameEvent.format;
 
-      log('Processing frame: format=$format, size=${width}x${height}, bytes=${imageData.length}');
+      log('Processing frame: format=$format, size=${width}x$height, bytes=${imageData.length}');
 
       // Update image size for overlay
       _imageSize = Size(width.toDouble(), height.toDouble());
 
-      // Create InputImage
+      // Native library already converts to NV21 format
+      // No manual conversion needed!
+      if (format != 'nv21') {
+        log('WARNING: Expected nv21 format but got: $format');
+        // Fallback: still try to process if format mismatch
+      }
+
+      // Data is already in NV21 format from native conversion
+      final nv21Data = imageData;
+
+      // Create InputImage with NV21 data (already converted by native library)
       final inputImage = InputImage.fromBytes(
-        bytes: imageData,
+        bytes: nv21Data,
         metadata: InputImageMetadata(
           size: Size(width.toDouble(), height.toDouble()),
           rotation: InputImageRotation.rotation0deg,

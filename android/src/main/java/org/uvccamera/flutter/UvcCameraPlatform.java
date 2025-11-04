@@ -946,13 +946,14 @@ import io.flutter.view.TextureRegistry;
             // Normal mode: Use native frame callback
             try {
                 // Ensure previous callback is cleaned up first
-                cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_YUV420SP);
+                cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_NV21);
                 
                 // Small delay to ensure cleanup
                 Thread.sleep(50);
                 
                 // Set frame callback to start receiving frames
-                cameraResources.camera().setFrameCallback(cameraResources.frameCallback(), UVCCamera.PIXEL_FORMAT_YUV420SP);
+                // Convert to NV21 format for ML Kit compatibility
+                cameraResources.camera().setFrameCallback(cameraResources.frameCallback(), UVCCamera.PIXEL_FORMAT_NV21);
                 
                 Log.v(TAG, "Frame callback attached successfully for camera: " + cameraId);
             } catch (Exception e) {
@@ -983,7 +984,7 @@ import io.flutter.view.TextureRegistry;
 
             try {
                 // Remove frame callback to stop receiving frames
-                cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_YUV420SP);
+                cameraResources.camera().setFrameCallback(null, UVCCamera.PIXEL_FORMAT_NV21);
                 
                 // Force cleanup delay to ensure resources are released
                 Thread.sleep(100);

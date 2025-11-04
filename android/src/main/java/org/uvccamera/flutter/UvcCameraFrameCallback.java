@@ -37,9 +37,14 @@ import java.util.Map;
     private final int height;
 
     /**
-     * Pixel format string
+     * Source pixel format string (original camera format)
      */
-    private final String pixelFormat;
+    private final String sourcePixelFormat;
+    
+    /**
+     * Output pixel format (always "nv21" after native conversion)
+     */
+    private static final String OUTPUT_PIXEL_FORMAT = "nv21";
 
     /**
      * Frame throttling for Android 14 compatibility
@@ -69,11 +74,11 @@ import java.util.Map;
      * @param height Frame height
      * @param pixelFormat Pixel format string
      */
-    public UvcCameraFrameCallback(UvcCameraFrameEventStreamHandler frameEventStreamHandler, int width, int height, String pixelFormat) {
+    public UvcCameraFrameCallback(UvcCameraFrameEventStreamHandler frameEventStreamHandler, int width, int height, String sourcePixelFormat) {
         this.frameEventStreamHandler = frameEventStreamHandler;
         this.width = width;
         this.height = height;
-        this.pixelFormat = pixelFormat;
+        this.sourcePixelFormat = sourcePixelFormat;
     }
 
     @Override
@@ -158,7 +163,8 @@ import java.util.Map;
             frameEvent.put("width", width);
             frameEvent.put("height", height);
             frameEvent.put("timestamp", System.currentTimeMillis());
-            frameEvent.put("format", pixelFormat);
+            // Send actual output format after native conversion (NV21), not source format
+            frameEvent.put("format", OUTPUT_PIXEL_FORMAT);
 
             // Send frame event to Flutter with null check
             if (eventSink != null) {
